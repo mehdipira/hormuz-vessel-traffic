@@ -21,6 +21,7 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 #title p { margin:0 0 8px; font-size:.84rem; line-height:1.4; color:var(--ink-dim); }
 .lay { display:flex; gap:8px; align-items:center; font-size:.9rem; padding:3px 0; cursor:pointer; }
 .sw { width:11px; height:11px; border-radius:50%; display:inline-block; }
+#legend { margin:2px 0 8px 28px; font-size:.72rem; color:var(--ink-dim); } #legend .bar { display:flex; margin:3px 0 1px; width:200px; } #legend .bar i { flex:1; height:8px; } #legend .lab { display:flex; width:200px; justify-content:space-between; font-weight:400; font-size:.66rem; color:var(--ink-faint); } #legend .lab b { font-weight:400; flex:1; text-align:left; }
 .lay { align-items:flex-start; } .lay small { display:block; font-size:.74rem; color:var(--ink-dim); line-height:1.3; } .lay.na { opacity:.55; cursor:not-allowed; } .lay.na b { font-weight:400; }
 #cmp { padding:2px 0 6px 28px; font-size:.82rem; color:var(--ink-dim); } #cmp select { background:var(--panel); color:var(--ink); border:1px solid var(--panel-edge); border-radius:4px; padding:2px 4px; }
 #title { max-height:calc(100vh - 150px); overflow:auto; }
@@ -48,8 +49,9 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 <div id="title">
   <h1>Hormuz Vessel Traffic</h1>
   <p>AIS vessel presence in the Persian Gulf, Strait of Hormuz and Gulf of Oman, 2026. Source: Global Fishing Watch.</p>
-  <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> <span><b>Vessel presence</b><small>Vessel-hours per 5 km cell, by month.</small></span></label>
-  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent. Dashed path = inferred sea route from last seen to reappeared (not a track).</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> <span><b>Vessel presence</b><small>Where ships were, by month. Log scale.</small></span></label>
+<div id="legend"><span>Vessel-hours per 5 km cell</span><div class="bar"><i style="background:#3b1f8f;opacity:0.6"></i><i style="background:#7b2d9a;opacity:0.72"></i><i style="background:#c4348c;opacity:0.82"></i><i style="background:#f2603f;opacity:0.9"></i><i style="background:#ffa931;opacity:0.95"></i><i style="background:#fff3a8;opacity:0.98"></i></div><div class="lab"><b>12</b><b>40</b><b>150</b><b>500</b><b>1.5k</b><b>5k+</b></div></div>
+  <label class="lay"><input type="checkbox" id="l-gap"> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent. Dashed path = inferred sea route from last seen to reappeared (not a track).</small></span></label>
   <label class="lay"><input type="checkbox" id="l-off"> <span class="sw" style="background:#ffb000"></span> <span><b style="color:#ffb000">Off route</b><small>Cells with traffic outside the Jan&ndash;Feb lanes, for the month shown.</small></span></label>
   <label class="lay"><input type="checkbox" id="l-cmp"> <span class="sw" style="background:#35e0ff"></span> <span><b style="color:#35e0ff">Compare two months</b><small>Red: more vessel-hours than the other month. Blue: fewer.</small></span></label>
   <div id="cmp" hidden><select id="selA" aria-label="Month A"></select> vs <select id="selB" aria-label="Month B"></select></div>
@@ -76,10 +78,16 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
 
   const dens = new CSVLayer({ url: "data/density.csv", latitudeField: "lat", longitudeField: "lon", title: "Vessel presence",
     fields: [{ name: "month", type: "string" }, { name: "lon", type: "double" }, { name: "lat", type: "double" }, { name: "hours", type: "double" }],
-    renderer: new HeatmapRenderer({ field: "hours", radius: 7, maxDensity: 6, minDensity: 0.05,
-      colorStops: [{ ratio: 0, color: "rgba(255,120,0,0)" }, { ratio: .12, color: "rgba(60,20,120,.7)" }, { ratio: .35, color: "rgba(190,40,110,.85)" },
-                   { ratio: .65, color: "rgb(255,130,40)" }, { ratio: 1, color: "rgb(255,245,170)" }] }),
-    popupEnabled: false });
+    renderer: { type: "class-breaks", field: "hours", defaultSymbol: { type: "simple-marker", style: "square", size: 0, color: [0, 0, 0, 0], outline: { width: 0 } },
+      classBreakInfos: [{ minValue: 12, maxValue: 40, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(59,31,143,0.6)", outline: { width: 0 } } },
+        { minValue: 40, maxValue: 150, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(123,45,154,0.72)", outline: { width: 0 } } },
+        { minValue: 150, maxValue: 500, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(196,52,140,0.82)", outline: { width: 0 } } },
+        { minValue: 500, maxValue: 1500, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(242,96,63,0.9)", outline: { width: 0 } } },
+        { minValue: 1500, maxValue: 5000, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(255,169,49,0.95)", outline: { width: 0 } } },
+        { minValue: 5000, maxValue: 1000000000.0, symbol: { type: "simple-marker", style: "square", size: 4, color: "rgba(255,243,168,0.98)", outline: { width: 0 } } }],
+      visualVariables: [{ type: "size", valueExpression: "$view.scale", valueUnit: "unknown",
+        stops: [{ value: 18000000, size: 1.5 }, { value: 9000000, size: 2.5 }, { value: 4600000, size: 4.5 }, { value: 2300000, size: 8 }, { value: 1150000, size: 16 }, { value: 575000, size: 32 }, { value: 290000, size: 62 }] }] },
+    popupTemplate: { title: "Vessel presence", content: "{hours} vessel-hours in {month} (5 km cell)" } });
   // vessel types as GFW reports them on events (presence by type is unavailable from GFW: that service returns "temporarily unavailable")
   const CLASSES = [
     { key: "cargo", label: "Cargo", color: "#ffd23f", vals: ["cargo"] },
@@ -112,9 +120,12 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
   map.addMany([dens, off, cmp, enc, gapPaths, gapPts, labels]);
   const sync = () => { const c = $("l-cmp").checked; dens.visible = $("l-dens").checked && !c; cmp.visible = c; $("cmp").hidden = !c; };
   $("l-dens").onchange = sync; $("l-cmp").onchange = () => { sync(); if ($("l-cmp").checked) compare(); };
-  $("l-gap").onchange = e => gapPaths.visible = gapPts.visible = e.target.checked;
+  gapPaths.visible = gapPts.visible = false;
+  const showClasses = () => $("classes").style.display = ($("l-gap").checked || $("l-enc").checked) ? "" : "none";
+  $("l-gap").onchange = e => { gapPaths.visible = gapPts.visible = e.target.checked; showClasses(); };
   $("l-off").onchange = e => off.visible = e.target.checked;
-  $("l-enc").onchange = e => enc.visible = e.target.checked;
+  $("l-enc").onchange = e => { enc.visible = e.target.checked; showClasses(); };
+  showClasses();
 
   const active = new Set(CLASSES.map(c => c.key));
   const box = $("classes");
@@ -145,7 +156,7 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
   function show(i) {
     idx = Math.max(0, Math.min(months.length - 1, i)); const m = months[idx];
     $("scrub").value = idx; $("month").textContent = m.month.slice(5) + "/" + m.month.slice(2, 4);
-    dens.definitionExpression = off.definitionExpression = `month = '${m.month}'`;
+    dens.definitionExpression = `month = '${m.month}' AND hours >= 12`; off.definitionExpression = `month = '${m.month}'`;
     const s = summary.strait.find(r => r.month === m.month);
     $("stats").innerHTML = `<b>${Math.round(m.vessel_hours).toLocaleString()}</b> vessel-hours in the box<br>` +
       (s ? `<b>${Math.round(s.hours).toLocaleString()}</b> in the Strait of Hormuz zone` : "");
