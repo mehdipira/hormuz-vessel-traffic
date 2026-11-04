@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hormuz Vessel Traffic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@200;300;400;600&family=Source+Sans+3:wght@300;400;600&display=swap">
+<link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
+<script src="https://js.arcgis.com/4.31/"></script>
+<style>
+:root { --ocean-1:#04122a; --ink:#dff1ff; --ink-dim:#8fb3d9; --ink-faint:#5f84ad; --panel:rgba(4,18,42,.82); --panel-edge:rgba(120,170,230,.26);
+  --gap:#ffd23f; --port:#35e0ff; --clr:#19ff74; color-scheme: dark; }
+html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink); overflow:hidden; font-family:"Source Sans 3","Segoe UI",system-ui,sans-serif; }
+#view { position:fixed; inset:0; }
+.esri-widget, .esri-widget--button { background-color:var(--panel); color:var(--ink); }
+.esri-popup__main-container { background:rgba(4,18,42,.96); border:1px solid var(--panel-edge); }
+#title { position:fixed; left:0; top:14px; width:min(78vw,340px); z-index:3; background:var(--panel); border:1px solid var(--panel-edge); border-left:0; border-radius:0 6px 6px 0; padding:14px 16px 12px; box-sizing:border-box; }
+#title h1 { margin:0 0 6px; font:300 1.25rem/1.15 Montserrat,sans-serif; letter-spacing:.08em; text-transform:uppercase; }
+#title p { margin:0 0 8px; font-size:.84rem; line-height:1.4; color:var(--ink-dim); }
+.lay { display:flex; gap:8px; align-items:center; font-size:.9rem; padding:3px 0; cursor:pointer; }
+.sw { width:11px; height:11px; border-radius:50%; display:inline-block; }
+#stats { margin-top:8px; border-top:1px solid var(--panel-edge); padding-top:8px; font-size:.82rem; color:var(--ink-dim); }
+#stats b { color:var(--ink); font-weight:600; }
+#clock { position:fixed; left:50%; transform:translateX(-50%); bottom:44px; display:flex; align-items:center; gap:14px; z-index:4; user-select:none; }
+#month { font:200 clamp(2.2rem,7vw,4.4rem)/1 Montserrat,sans-serif; color:var(--clr); text-shadow:0 0 22px rgba(25,255,116,.45); font-variant-numeric:tabular-nums; min-width:5.4ch; text-align:center; }
+.step, #play { width:42px; height:42px; border-radius:50%; border:1px solid var(--panel-edge); background:var(--panel); color:var(--ink); cursor:pointer; font-size:1rem; }
+#play[aria-pressed="true"] { border-color:var(--clr); color:var(--clr); }
+#scrub { position:fixed; left:50%; transform:translateX(-50%); bottom:16px; width:min(420px,70vw); accent-color:var(--clr); z-index:4; }
+#note { position:fixed; right:12px; bottom:8px; max-width:min(60vw,420px); font-size:.7rem; color:var(--ink-faint); text-align:right; z-index:3; }
+@media (max-width:600px){ #note{display:none} #title{width:calc(100vw - 32px)} }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="title">
+  <h1>Hormuz Vessel Traffic</h1>
+  <p>AIS vessel presence in the Persian Gulf, Strait of Hormuz and Gulf of Oman, 2026. Source: Global Fishing Watch.</p>
+  <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> Vessel presence (hours)</label>
+  <label class="lay"><input type="checkbox" id="l-port" checked> <span class="sw" style="background:var(--port)"></span> Encounters</label>
+  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> AIS gaps (going dark)</label>
+  <div id="stats"></div>
+</div>
+<div id="clock">
+  <button class="step" id="prev" aria-label="Previous month">&#9664;</button>
+  <div id="month">—</div>
+  <button class="step" id="next" aria-label="Next month">&#9654;</button>
+  <button id="play" aria-pressed="false" aria-label="Play">&#9654;&#9654;</button>
+</div>
+<input type="range" id="scrub" min="0" max="0" value="0" aria-label="Month">
+<div id="note">Gridded vessel-hours (0.05&deg; cells); no ship tracks (GFW does not publish raw positions). Low counts near coasts can reflect GNSS jamming. CC BY-NC.</div>
+<script>
+require(["esri/Map", "esri/views/MapView", "esri/layers/CSVLayer", "esri/layers/GeoJSONLayer", "esri/renderers/HeatmapRenderer"],
+function (Map, MapView, CSVLayer, GeoJSONLayer, HeatmapRenderer) {
+  const map = new Map({ basemap: "dark-gray-vector" });
+  const view = new MapView({ container: "view", map, center: [54.5, 26.2], zoom: 6, constraints: { minZoom: 4 } });
+  const $ = id => document.getElementById(id);
+
+  const dens = new CSVLayer({ url: "data/density.csv", latitudeField: "lat", longitudeField: "lon", title: "Vessel presence",
+    fields: [{ name: "month", type: "string" }, { name: "lon", type: "double" }, { name: "lat", type: "double" }, { name: "hours", type: "double" }],
+    renderer: new HeatmapRenderer({ field: "hours", radius: 7, maxDensity: 6, minDensity: 0.05,
+      colorStops: [{ ratio: 0, color: "rgba(255,120,0,0)" }, { ratio: .12, color: "rgba(60,20,120,.7)" }, { ratio: .35, color: "rgba(190,40,110,.85)" },
+                   { ratio: .65, color: "rgb(255,130,40)" }, { ratio: 1, color: "rgb(255,245,170)" }] }),
+    popupEnabled: false });
+  const port = new GeoJSONLayer({ url: "data/encounters.geojson", title: "Encounters",
+    renderer: { type: "simple", symbol: { type: "simple-marker", size: 5, color: [53, 224, 255, .65], outline: { width: 0 } } },
+    popupTemplate: { title: "Ship-to-ship encounter: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>{start_ts}<br>{dur_h} h encounter" } });
+  const gap = new GeoJSONLayer({ url: "data/gaps.geojson", title: "AIS gaps",
+    renderer: { type: "simple", symbol: { type: "simple-marker", size: 10, color: [255, 210, 63, .9], outline: { color: "#04122a", width: 1 } } },
+    popupTemplate: { title: "AIS gap: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark from {gap_start} to {gap_end} ({dur_h} h)" } });
+  map.addMany([dens, port, gap]);
+  $("l-dens").onchange = e => dens.visible = e.target.checked;
+  $("l-port").onchange = e => port.visible = e.target.checked;
+  $("l-gap").onchange = e => gap.visible = e.target.checked;
+
+  let months = [], idx = 0, summary = null, timer = null;
+  function show(i) {
+    idx = Math.max(0, Math.min(months.length - 1, i)); const m = months[idx];
+    $("scrub").value = idx; $("month").textContent = m.month.slice(5) + "/" + m.month.slice(2, 4);
+    dens.definitionExpression = `month = '${m.month}'`;
+    const s = summary.strait.find(r => r.month === m.month);
+    $("stats").innerHTML = `<b>${Math.round(m.vessel_hours).toLocaleString()}</b> vessel-hours in the box<br>` +
+      (s ? `<b>${Math.round(s.hours).toLocaleString()}</b> in the Strait of Hormuz zone` : "");
+  }
+  fetch("data/summary.json").then(r => r.json()).then(s => {
+    summary = s; months = s.months; $("scrub").max = months.length - 1; show(months.length - 1);
+  });
+  $("scrub").oninput = e => show(+e.target.value);
+  $("prev").onclick = () => show(idx - 1); $("next").onclick = () => show(idx + 1);
+  $("play").onclick = () => {
+    const on = $("play").getAttribute("aria-pressed") !== "true"; $("play").setAttribute("aria-pressed", on);
+    clearInterval(timer); if (on) timer = setInterval(() => show(idx + 1 >= months.length ? 0 : idx + 1), 1400);
+  };
+});
+</script>
+</body>
+</html>
