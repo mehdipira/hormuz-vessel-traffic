@@ -51,7 +51,7 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
   <p>AIS vessel presence in the Persian Gulf, Strait of Hormuz and Gulf of Oman, 2026. Source: Global Fishing Watch.</p>
   <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> <span><b>Vessel presence</b><small>Where ships were, by month. Log scale.</small></span></label>
 <div id="legend"><span>Vessel-hours per 5 km cell</span><div class="bar"><i style="background:#3b1f8f;opacity:0.6"></i><i style="background:#7b2d9a;opacity:0.72"></i><i style="background:#c4348c;opacity:0.82"></i><i style="background:#f2603f;opacity:0.9"></i><i style="background:#ffa931;opacity:0.95"></i><i style="background:#fff3a8;opacity:0.98"></i></div><div class="lab"><b>12</b><b>40</b><b>150</b><b>500</b><b>1.5k</b><b>5k+</b></div></div>
-  <label class="lay"><input type="checkbox" id="l-gap"> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent. Dashed path = inferred sea route from last seen to reappeared (not a track).</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-gap"> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent. Dashed path = inferred sea route from last seen to reappeared (not a track).<br><b id="gapcount" style="color:var(--gap)"></b></small></span></label>
   <label class="lay"><input type="checkbox" id="l-off"> <span class="sw" style="background:#ffb000"></span> <span><b style="color:#ffb000">Off route</b><small>Cells with traffic outside the Jan&ndash;Feb lanes, for the month shown.</small></span></label>
   <label class="lay"><input type="checkbox" id="l-cmp"> <span class="sw" style="background:#35e0ff"></span> <span><b style="color:#35e0ff">Compare two months</b><small>Red: more vessel-hours than the other month. Blue: fewer.</small></span></label>
   <div id="cmp" hidden><select id="selA" aria-label="Month A"></select> vs <select id="selB" aria-label="Month B"></select></div>
@@ -133,7 +133,14 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
     b.onclick = () => { active.has(c.key) ? active.delete(c.key) : active.add(c.key); b.setAttribute("aria-pressed", active.has(c.key)); applyClasses(); }; box.appendChild(b); });
   function applyClasses() {
     const vals = CLASSES.filter(c => active.has(c.key)).flatMap(c => c.vals), def = vals.length ? "vessel_type IN (" + vals.map(v => "'" + v + "'").join(",") + ")" : "1=0";
-    gapPaths.definitionExpression = gapPts.definitionExpression = enc.definitionExpression = def;
+    classExpr = def; applyFilters();
+  }
+  let classExpr = "1=1", ymSel = 0;
+  function applyFilters() {
+    if (!ymSel) return;
+    gapPaths.definitionExpression = gapPts.definitionExpression = `${classExpr} AND ym_start <= ${ymSel} AND ym_end >= ${ymSel}`;
+    enc.definitionExpression = `${classExpr} AND ym = ${ymSel}`;
+    gapPaths.queryFeatureCount().then(n => { $("gapcount").textContent = n ? `${n} gap route${n > 1 ? "s" : ""} active in this month` : "No GFW gap events active in this month"; }).catch(() => {});
   }
 
   let cellsP = null;      // month -> Map("lon,lat" -> hours); one shared promise so parallel calls wait for the same load
@@ -156,6 +163,7 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
   function show(i) {
     idx = Math.max(0, Math.min(months.length - 1, i)); const m = months[idx];
     $("scrub").value = idx; $("month").textContent = m.month.slice(5) + "/" + m.month.slice(2, 4);
+    ymSel = +m.month.replace("-", ""); applyFilters();
     dens.definitionExpression = `month = '${m.month}' AND hours >= 12`; off.definitionExpression = `month = '${m.month}'`;
     const s = summary.strait.find(r => r.month === m.month);
     $("stats").innerHTML = `<b>${Math.round(m.vessel_hours).toLocaleString()}</b> vessel-hours in the box<br>` +
