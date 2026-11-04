@@ -27,6 +27,13 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 .sw { flex:none; margin-top:4px; }
 #stats { margin-top:8px; border-top:1px solid var(--panel-edge); padding-top:8px; font-size:.82rem; color:var(--ink-dim); }
 #stats b { color:var(--ink); font-weight:600; }
+#classes { position:fixed; right:0; bottom:96px; display:flex; flex-direction:column; gap:3px; border-left:1px solid var(--panel-edge); padding-left:16px; margin-right:18px; z-index:4; }
+#ctitle { font:400 .7rem Montserrat,sans-serif; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px; } #ctitle small { display:block; letter-spacing:0; text-transform:none; font-size:.68rem; }
+#classes button { background:none; border:0; text-align:left; cursor:pointer; font:300 1.05rem/1.25 Montserrat,sans-serif; letter-spacing:.02em; text-transform:uppercase; color:var(--ink-faint); padding:1px 0; position:relative; text-shadow:0 0 6px #04122a; }
+#classes button:hover { color:var(--ink); }
+#classes button[aria-pressed="true"] { color:var(--c); text-shadow:0 0 12px color-mix(in srgb, var(--c) 55%, transparent); }
+#classes button[aria-pressed="true"]::before { content:""; position:absolute; left:-22px; top:.5em; width:7px; height:7px; border-radius:50%; background:var(--c); box-shadow:0 0 8px var(--c); }
+@media (max-width:600px){ #classes{ bottom:140px; margin-right:10px } #classes button{ font-size:.85rem } }
 #clock { position:fixed; left:50%; transform:translateX(-50%); bottom:44px; display:flex; align-items:center; gap:14px; z-index:4; user-select:none; }
 #month { font:200 clamp(2.2rem,7vw,4.4rem)/1 Montserrat,sans-serif; color:var(--clr); text-shadow:0 0 22px rgba(25,255,116,.45); font-variant-numeric:tabular-nums; min-width:5.4ch; text-align:center; }
 .step, #play { width:42px; height:42px; border-radius:50%; border:1px solid var(--panel-edge); background:var(--panel); color:var(--ink); cursor:pointer; font-size:1rem; }
@@ -42,7 +49,7 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
   <h1>Hormuz Vessel Traffic</h1>
   <p>AIS vessel presence in the Persian Gulf, Strait of Hormuz and Gulf of Oman, 2026. Source: Global Fishing Watch.</p>
   <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> <span><b>Vessel presence</b><small>Vessel-hours per 5 km cell, by month.</small></span></label>
-  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent (dashed line = last seen to reappeared).</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent. Dashed path = inferred sea route from last seen to reappeared (not a track).</small></span></label>
   <label class="lay"><input type="checkbox" id="l-off"> <span class="sw" style="background:#ffb000"></span> <span><b style="color:#ffb000">Off route</b><small>Cells with traffic outside the Jan&ndash;Feb lanes, for the month shown.</small></span></label>
   <label class="lay"><input type="checkbox" id="l-cmp"> <span class="sw" style="background:#35e0ff"></span> <span><b style="color:#35e0ff">Compare two months</b><small>Red: more vessel-hours than the other month. Blue: fewer.</small></span></label>
   <div id="cmp" hidden><select id="selA" aria-label="Month A"></select> vs <select id="selB" aria-label="Month B"></select></div>
@@ -51,6 +58,7 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
   <label class="lay na"><input type="checkbox" disabled> <span class="sw" style="background:#9ab"></span> <span><b>Ship tracks</b><small>Not available: GFW's vessel-track dataset is restricted (HTTP 403 for this account).</small></span></label>
   <div id="stats"></div>
 </div>
+<div id="classes" aria-label="Vessel types"><div id="ctitle">Vessel type<small>going dark and encounters (GFW)</small></div></div>
 <div id="clock">
   <button class="step" id="prev" aria-label="Previous month">&#9664;</button>
   <div id="month">—</div>
@@ -72,15 +80,27 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
       colorStops: [{ ratio: 0, color: "rgba(255,120,0,0)" }, { ratio: .12, color: "rgba(60,20,120,.7)" }, { ratio: .35, color: "rgba(190,40,110,.85)" },
                    { ratio: .65, color: "rgb(255,130,40)" }, { ratio: 1, color: "rgb(255,245,170)" }] }),
     popupEnabled: false });
-  const enc = new GeoJSONLayer({ url: "data/encounters.geojson", title: "Encounters", visible: false,
-    renderer: { type: "simple", symbol: { type: "simple-marker", size: 5, color: [53, 224, 255, .65], outline: { width: 0 } } },
+  // vessel types as GFW reports them on events (presence by type is unavailable from GFW: that service returns "temporarily unavailable")
+  const CLASSES = [
+    { key: "cargo", label: "Cargo", color: "#ffd23f", vals: ["cargo"] },
+    { key: "passenger", label: "Passenger", color: "#35e0ff", vals: ["passenger"] },
+    { key: "fishing", label: "Fishing", color: "#7cff6b", vals: ["fishing"] },
+    { key: "bunker", label: "Bunker / carrier", color: "#ff9a3d", vals: ["bunker", "carrier"] },
+    { key: "other", label: "Other", color: "#c8a2ff", vals: ["other_non_fishing", "other"] } ];
+  const byType = (kind) => ({ type: "unique-value", field: "vessel_type",
+    defaultSymbol: kind === "line" ? { type: "simple-line", color: "#c8a2ff", width: 2.2, style: "short-dash" } : { type: "simple-marker", size: kind === "enc" ? 4 : 10, color: "#c8a2ff", outline: { color: "#04122a", width: kind === "enc" ? 0 : 1 } },
+    uniqueValueInfos: CLASSES.flatMap(c => c.vals.map(v => ({ value: v, symbol: kind === "line" ? { type: "simple-line", color: c.color, width: 2.2, style: "short-dash" }
+      : { type: "simple-marker", size: kind === "enc" ? 4 : 10, color: c.color, outline: { color: "#04122a", width: kind === "enc" ? 0 : 1 } } }))) });
+  const gapContent = "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark {dur_h} h ({gap_start} to {gap_end})<br>Implied speed {implied_kn} kn over {dist_km} km. Intentional-disabling flag: {intentional}";
+  const enc = new GeoJSONLayer({ url: "data/encounters.geojson", title: "Encounters", visible: false, renderer: byType("enc"),
     popupTemplate: { title: "Ship-to-ship encounter: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>{start_ts}<br>{dur_h} h" } });
-  const gapLines = new GeoJSONLayer({ url: "data/gap_lines.geojson", title: "AIS gap paths",
-    renderer: { type: "simple", symbol: { type: "simple-line", color: [255, 210, 63, .85], width: 2, style: "short-dash" } },
-    popupTemplate: { title: "AIS gap: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark {dur_h} h ({gap_start} to {gap_end})<br>Implied speed {implied_kn} kn over {dist_km} km. Intentional-disabling flag: {intentional}" } });
-  const gap = new GeoJSONLayer({ url: "data/gaps.geojson", title: "AIS gaps",
-    renderer: { type: "simple", symbol: { type: "simple-marker", size: 9, color: [255, 210, 63, .95], outline: { color: "#04122a", width: 1 } } },
-    popupTemplate: { title: "AIS gap: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark from {gap_start} to {gap_end} ({dur_h} h)" } });
+  const gapPaths = new GeoJSONLayer({ url: "data/gap_paths.geojson", title: "AIS gap routes", renderer: byType("line"),
+    popupTemplate: { title: "AIS gap (inferred sea route): {name}", content: gapContent + "<br><i>The route is inferred over open water between the two fixes; it is not a track.</i>" } });
+  const gapPts = new GeoJSONLayer({ url: "data/gap_points.geojson", title: "AIS gap ends", renderer: byType("pt"),
+    popupTemplate: { title: "{role}: {name}", content: gapContent } });
+  const labels = new GraphicsLayer({ title: "Place names", graphics: [["Persian Gulf", 51.1, 27.5, 13], ["Strait of Hormuz", 56.6, 26.35, 10]].map(([t, x, y, s]) => new Graphic({
+    geometry: { type: "point", longitude: x, latitude: y },
+    symbol: { type: "text", text: t.toUpperCase(), color: "#bcd6f2", haloColor: "#04122a", haloSize: 1.6, font: { family: "Arial Unicode MS", size: s, weight: "bold" }, kerning: true } })) });
   const off = new CSVLayer({ url: "data/offroute.csv", latitudeField: "lat", longitudeField: "lon", title: "Off route", visible: false,
     fields: [{ name: "month", type: "string" }, { name: "lon", type: "double" }, { name: "lat", type: "double" }, { name: "hours", type: "double" }],
     renderer: { type: "simple", symbol: { type: "simple-marker", style: "square", size: 5, color: [255, 176, 0, .8], outline: { width: 0 } },
@@ -89,12 +109,21 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapR
   const cmp = new GraphicsLayer({ title: "Month comparison", visible: false });
   const ramp = d => { const t = Math.max(-1, Math.min(1, d / 2.5)), s = Math.abs(t), base = [150, 160, 180], tgt = t < 0 ? [43, 123, 255] : [255, 45, 45];
     return [...base.map((v, i) => Math.round(v + (tgt[i] - v) * Math.min(1, s * 1.4))), .25 + .65 * Math.min(1, s * 1.4)]; };
-  map.addMany([dens, off, cmp, enc, gapLines, gap]);
+  map.addMany([dens, off, cmp, enc, gapPaths, gapPts, labels]);
   const sync = () => { const c = $("l-cmp").checked; dens.visible = $("l-dens").checked && !c; cmp.visible = c; $("cmp").hidden = !c; };
   $("l-dens").onchange = sync; $("l-cmp").onchange = () => { sync(); if ($("l-cmp").checked) compare(); };
-  $("l-gap").onchange = e => gap.visible = gapLines.visible = e.target.checked;
+  $("l-gap").onchange = e => gapPaths.visible = gapPts.visible = e.target.checked;
   $("l-off").onchange = e => off.visible = e.target.checked;
   $("l-enc").onchange = e => enc.visible = e.target.checked;
+
+  const active = new Set(CLASSES.map(c => c.key));
+  const box = $("classes");
+  CLASSES.forEach(c => { const b = document.createElement("button"); b.textContent = c.label; b.style.setProperty("--c", c.color); b.setAttribute("aria-pressed", "true");
+    b.onclick = () => { active.has(c.key) ? active.delete(c.key) : active.add(c.key); b.setAttribute("aria-pressed", active.has(c.key)); applyClasses(); }; box.appendChild(b); });
+  function applyClasses() {
+    const vals = CLASSES.filter(c => active.has(c.key)).flatMap(c => c.vals), def = vals.length ? "vessel_type IN (" + vals.map(v => "'" + v + "'").join(",") + ")" : "1=0";
+    gapPaths.definitionExpression = gapPts.definitionExpression = enc.definitionExpression = def;
+  }
 
   let cellsP = null;      // month -> Map("lon,lat" -> hours); one shared promise so parallel calls wait for the same load
   const loadCells = () => cellsP ||= fetch("data/density.csv").then(r => r.text()).then(txt => {
