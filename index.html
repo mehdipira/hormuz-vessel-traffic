@@ -21,6 +21,10 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 #title p { margin:0 0 8px; font-size:.84rem; line-height:1.4; color:var(--ink-dim); }
 .lay { display:flex; gap:8px; align-items:center; font-size:.9rem; padding:3px 0; cursor:pointer; }
 .sw { width:11px; height:11px; border-radius:50%; display:inline-block; }
+.lay { align-items:flex-start; } .lay small { display:block; font-size:.74rem; color:var(--ink-dim); line-height:1.3; } .lay.na { opacity:.55; cursor:not-allowed; } .lay.na b { font-weight:400; }
+#cmp { padding:2px 0 6px 28px; font-size:.82rem; color:var(--ink-dim); } #cmp select { background:var(--panel); color:var(--ink); border:1px solid var(--panel-edge); border-radius:4px; padding:2px 4px; }
+#title { max-height:calc(100vh - 150px); overflow:auto; }
+.sw { flex:none; margin-top:4px; }
 #stats { margin-top:8px; border-top:1px solid var(--panel-edge); padding-top:8px; font-size:.82rem; color:var(--ink-dim); }
 #stats b { color:var(--ink); font-weight:600; }
 #clock { position:fixed; left:50%; transform:translateX(-50%); bottom:44px; display:flex; align-items:center; gap:14px; z-index:4; user-select:none; }
@@ -37,9 +41,14 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 <div id="title">
   <h1>Hormuz Vessel Traffic</h1>
   <p>AIS vessel presence in the Persian Gulf, Strait of Hormuz and Gulf of Oman, 2026. Source: Global Fishing Watch.</p>
-  <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> Vessel presence (hours)</label>
-  <label class="lay"><input type="checkbox" id="l-port" checked> <span class="sw" style="background:var(--port)"></span> Encounters</label>
-  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> AIS gaps (going dark)</label>
+  <label class="lay"><input type="checkbox" id="l-dens" checked> <span class="sw" style="background:#ff7a30"></span> <span><b>Vessel presence</b><small>Vessel-hours per 5 km cell, by month.</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-gap" checked> <span class="sw" style="background:var(--gap)"></span> <span><b style="color:var(--gap)">Going dark</b><small>AIS gaps: where a ship went silent (dashed line = last seen to reappeared).</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-off"> <span class="sw" style="background:#ffb000"></span> <span><b style="color:#ffb000">Off route</b><small>Cells with traffic outside the Jan&ndash;Feb lanes, for the month shown.</small></span></label>
+  <label class="lay"><input type="checkbox" id="l-cmp"> <span class="sw" style="background:#35e0ff"></span> <span><b style="color:#35e0ff">Compare two months</b><small>Red: more vessel-hours than the other month. Blue: fewer.</small></span></label>
+  <div id="cmp" hidden><select id="selA" aria-label="Month A"></select> vs <select id="selB" aria-label="Month B"></select></div>
+  <label class="lay"><input type="checkbox" id="l-enc"> <span class="sw" style="background:var(--port)"></span> <span><b>Encounters</b><small>Ship-to-ship meetings (GFW).</small></span></label>
+  <label class="lay na"><input type="checkbox" disabled> <span class="sw" style="background:#ff3df2"></span> <span><b style="color:#ff3df2">Impossible jumps</b><small>Not available: needs raw AIS positions, which GFW does not publish.</small></span></label>
+  <label class="lay na"><input type="checkbox" disabled> <span class="sw" style="background:#9ab"></span> <span><b>Ship tracks</b><small>Not available: GFW's vessel-track dataset is restricted (HTTP 403 for this account).</small></span></label>
   <div id="stats"></div>
 </div>
 <div id="clock">
@@ -51,8 +60,8 @@ html, body { height:100%; margin:0; background:var(--ocean-1); color:var(--ink);
 <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Month">
 <div id="note">Gridded vessel-hours (0.05&deg; cells); no ship tracks (GFW does not publish raw positions). Low counts near coasts can reflect GNSS jamming. CC BY-NC.</div>
 <script>
-require(["esri/Map", "esri/views/MapView", "esri/layers/CSVLayer", "esri/layers/GeoJSONLayer", "esri/renderers/HeatmapRenderer"],
-function (Map, MapView, CSVLayer, GeoJSONLayer, HeatmapRenderer) {
+require(["esri/Map", "esri/views/MapView", "esri/layers/CSVLayer", "esri/layers/GeoJSONLayer", "esri/layers/GraphicsLayer", "esri/Graphic", "esri/renderers/HeatmapRenderer"],
+function (Map, MapView, CSVLayer, GeoJSONLayer, GraphicsLayer, Graphic, HeatmapRenderer) {
   const map = new Map({ basemap: "dark-gray-vector" });
   const view = new MapView({ container: "view", map, center: [54.5, 26.2], zoom: 6, constraints: { minZoom: 4 } });
   const $ = id => document.getElementById(id);
@@ -63,28 +72,59 @@ function (Map, MapView, CSVLayer, GeoJSONLayer, HeatmapRenderer) {
       colorStops: [{ ratio: 0, color: "rgba(255,120,0,0)" }, { ratio: .12, color: "rgba(60,20,120,.7)" }, { ratio: .35, color: "rgba(190,40,110,.85)" },
                    { ratio: .65, color: "rgb(255,130,40)" }, { ratio: 1, color: "rgb(255,245,170)" }] }),
     popupEnabled: false });
-  const port = new GeoJSONLayer({ url: "data/encounters.geojson", title: "Encounters",
+  const enc = new GeoJSONLayer({ url: "data/encounters.geojson", title: "Encounters", visible: false,
     renderer: { type: "simple", symbol: { type: "simple-marker", size: 5, color: [53, 224, 255, .65], outline: { width: 0 } } },
-    popupTemplate: { title: "Ship-to-ship encounter: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>{start_ts}<br>{dur_h} h encounter" } });
+    popupTemplate: { title: "Ship-to-ship encounter: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>{start_ts}<br>{dur_h} h" } });
+  const gapLines = new GeoJSONLayer({ url: "data/gap_lines.geojson", title: "AIS gap paths",
+    renderer: { type: "simple", symbol: { type: "simple-line", color: [255, 210, 63, .85], width: 2, style: "short-dash" } },
+    popupTemplate: { title: "AIS gap: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark {dur_h} h ({gap_start} to {gap_end})<br>Implied speed {implied_kn} kn over {dist_km} km. Intentional-disabling flag: {intentional}" } });
   const gap = new GeoJSONLayer({ url: "data/gaps.geojson", title: "AIS gaps",
-    renderer: { type: "simple", symbol: { type: "simple-marker", size: 10, color: [255, 210, 63, .9], outline: { color: "#04122a", width: 1 } } },
+    renderer: { type: "simple", symbol: { type: "simple-marker", size: 9, color: [255, 210, 63, .95], outline: { color: "#04122a", width: 1 } } },
     popupTemplate: { title: "AIS gap: {name}", content: "MMSI {ssvid}, flag {flag}, {vessel_type}<br>Dark from {gap_start} to {gap_end} ({dur_h} h)" } });
-  map.addMany([dens, port, gap]);
-  $("l-dens").onchange = e => dens.visible = e.target.checked;
-  $("l-port").onchange = e => port.visible = e.target.checked;
-  $("l-gap").onchange = e => gap.visible = e.target.checked;
+  const off = new CSVLayer({ url: "data/offroute.csv", latitudeField: "lat", longitudeField: "lon", title: "Off route", visible: false,
+    fields: [{ name: "month", type: "string" }, { name: "lon", type: "double" }, { name: "lat", type: "double" }, { name: "hours", type: "double" }],
+    renderer: { type: "simple", symbol: { type: "simple-marker", style: "square", size: 5, color: [255, 176, 0, .8], outline: { width: 0 } },
+                visualVariables: [{ type: "size", field: "hours", stops: [{ value: 12, size: 4 }, { value: 200, size: 9 }] }] },
+    popupTemplate: { title: "Off-route activity", content: "{hours} vessel-hours in {month} in a 5 km cell with little traffic in Jan&ndash;Feb" } });
+  const cmp = new GraphicsLayer({ title: "Month comparison", visible: false });
+  const ramp = d => { const t = Math.max(-1, Math.min(1, d / 2.5)), s = Math.abs(t), base = [150, 160, 180], tgt = t < 0 ? [43, 123, 255] : [255, 45, 45];
+    return [...base.map((v, i) => Math.round(v + (tgt[i] - v) * Math.min(1, s * 1.4))), .25 + .65 * Math.min(1, s * 1.4)]; };
+  map.addMany([dens, off, cmp, enc, gapLines, gap]);
+  const sync = () => { const c = $("l-cmp").checked; dens.visible = $("l-dens").checked && !c; cmp.visible = c; $("cmp").hidden = !c; };
+  $("l-dens").onchange = sync; $("l-cmp").onchange = () => { sync(); if ($("l-cmp").checked) compare(); };
+  $("l-gap").onchange = e => gap.visible = gapLines.visible = e.target.checked;
+  $("l-off").onchange = e => off.visible = e.target.checked;
+  $("l-enc").onchange = e => enc.visible = e.target.checked;
+
+  let cellsP = null;      // month -> Map("lon,lat" -> hours); one shared promise so parallel calls wait for the same load
+  const loadCells = () => cellsP ||= fetch("data/density.csv").then(r => r.text()).then(txt => {
+    const cells = {}, lines = txt.split("\n");
+    for (let i = 1; i < lines.length; i++) { const p = lines[i].split(","); if (p.length < 4) continue; (cells[p[0]] ||= new globalThis.Map()).set(p[1] + "," + p[2], +p[3]); }
+    return cells;
+  });
+  async function compare() {
+    const c = await loadCells(), A = c[$("selA").value] || new globalThis.Map(), B = c[$("selB").value] || new globalThis.Map(), keys = new Set([...A.keys(), ...B.keys()]), gs = []; let oid = 1;
+    for (const k of keys) { const a = A.get(k) || 0, b = B.get(k) || 0; if (a + b < 12) continue; const [lon, lat] = k.split(",").map(Number), d = Math.log((b + 1) / (a + 1));
+      gs.push(new Graphic({ geometry: { type: "point", longitude: lon, latitude: lat },
+        symbol: { type: "simple-marker", style: "square", size: 5, color: ramp(d), outline: { width: 0 } }, attributes: { a: Math.round(a), b: Math.round(b) },
+        popupTemplate: { title: "Month comparison", content: "A: {a} vessel-hours<br>B: {b} vessel-hours" } })); }
+    cmp.removeAll(); cmp.addMany(gs);
+  }
+  $("selA").onchange = $("selB").onchange = () => { if ($("l-cmp").checked) compare(); };
 
   let months = [], idx = 0, summary = null, timer = null;
   function show(i) {
     idx = Math.max(0, Math.min(months.length - 1, i)); const m = months[idx];
     $("scrub").value = idx; $("month").textContent = m.month.slice(5) + "/" + m.month.slice(2, 4);
-    dens.definitionExpression = `month = '${m.month}'`;
+    dens.definitionExpression = off.definitionExpression = `month = '${m.month}'`;
     const s = summary.strait.find(r => r.month === m.month);
     $("stats").innerHTML = `<b>${Math.round(m.vessel_hours).toLocaleString()}</b> vessel-hours in the box<br>` +
       (s ? `<b>${Math.round(s.hours).toLocaleString()}</b> in the Strait of Hormuz zone` : "");
   }
   fetch("data/summary.json").then(r => r.json()).then(s => {
-    summary = s; months = s.months; $("scrub").max = months.length - 1; show(months.length - 1);
+    summary = s; months = s.months;
+    for (const sel of [$("selA"), $("selB")]) months.forEach(m => sel.add(new Option(m.month, m.month)));
+    $("selA").value = months[0].month; $("selB").value = months[months.length - 1].month; $("scrub").max = months.length - 1; show(months.length - 1);
   });
   $("scrub").oninput = e => show(+e.target.value);
   $("prev").onclick = () => show(idx - 1); $("next").onclick = () => show(idx + 1);
